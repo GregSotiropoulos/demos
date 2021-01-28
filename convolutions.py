@@ -4,23 +4,24 @@
 A collection of convolution algorithms accelerated with
 `NumPy <https://numpy.org/>`_, `CuPy <https://cupy.dev/>`_ and
 `Numba <https://numba.pydata.org/>`_. Written for instructive purposes and to
-complement the somewhat lacking documentation on how to write CUDA kernels in
-CuPy and Numba, and it does so with a motivating/fun application -- and no,
+complement the somewhat lacking documentation on how to write `CUDA kernels
+<https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#kernels>`_
+in CuPy and Numba, and it does so with a motivating/fun application -- and no,
 it's not Convolutional NNs 😒
 
 |
 Convolution is used here to evolve a Game of Life (the prototypical Cellular
-Automata model). CAs, which compute the viability of a cell (ie a binary value
+Automaton model). CAs, which compute the viability of a cell (ie a binary value
 in a 2D grid) based on the values (0 = dead, 1 = alive) of the 8 neighbouring
-cells, naturally benefit from the optimizations that the various convolution
-algorithms in NumPy implement.
+cells, naturally benefit from the optimizations used in NumPy's various
+convolution algorithms.
 
 |
-There are multiple convolution methods in NumPy/SciPy algorithms and each
-of them can be further accelerated with CuPy or Numba. So how are we to choose
-one? This module aims to provide insights on this question in an easy and
-(hopefully) fun way. Apart from sheer speed, relevant issues that will emerge
-through experimentation are:
+There are multiple convolution methods in NumPy/SciPy and each of them can be
+further accelerated with CuPy or Numba. So how are we to choose one? This
+module aims to provide insights on this question in an easy and (hopefully)
+fun way. Apart from sheer speed, relevant issues that will emerge through
+experimentation are:
     *   Compatibility/universality: not all methods work on all systems. For
         starters, to use the GPU-accelerated versions, you need a working CUDA
         Developer's Toolkit installation. Furthermore, this code is untested on
@@ -28,16 +29,15 @@ through experimentation are:
     *   (Not so) subtle issues with array sizes/alignment -- for example there
         seems to be an issue with CuPy's ``RawKernel`` method for arrays whose
         dimensions are not powers of 2. I'm currently investigating this and
-        will have something to say about this (a fix and/or an explanation) in
-        an upcoming version.
+        will have something to say about it (a fix and/or explanation) in the
+        update.
     *   Choice of certain parameters, such as the "threads per block" in CUDA
         kernels.
 
 |
 Notes
 =====
-    *   If you like CAs (who doesn't), check out
-        `my other project
+    *   If you like CAs (who doesn't), check out `my other project
         <https://github.com/GregSotiropoulos/cellular_automata>`_,
         which has a full-fledged GUI that allows you to run, visualize and save
         CAs, among other things.
@@ -47,10 +47,9 @@ Notes
         <https://docs.cupy.dev/en/stable/install.html>`_ for details. The
         existing functions have been tested on CUDA 11.0 and 11.1.
     *   Since there is no ``requirements.txt`` or ``setup.py``, users should be
-        aware that on Windows system, NumPy has to have a version other than
-        1.19.4 -- see more details
-        `here <https://github.com/numpy/numpy/wiki/FMod-Bug-on-Windows>`_.
-
+        aware that on Windows x64 system, NumPy has to have a version other
+        than 1.19.4 -- for the (gory) details of why this is, see `here
+        <https://github.com/numpy/numpy/wiki/FMod-Bug-on-Windows>`_.
 """
 
 # NumPy
@@ -108,6 +107,7 @@ def default_options():
         int_types=('u1', 'i1'),
         threads_per_block=(8, ) * 2,  # CUDA's blockDim
         random_seed=0,
+        run_func_prefix='run_ca_'
     )
 
 
@@ -118,7 +118,7 @@ conv_opts = Sns()
 
 def all_func_speeds(fnames=(), **opts):
     """
-    Determine whether the functions (passed as function names in `fnames`)
+    Determine whether the functions (passed as function names in ``fnames``)
     to be tested are all fast, all slow or a mix of fast and slow ones.
 
     :param fnames: A tuple of function names.
@@ -532,9 +532,11 @@ def main(pat='*', print_arrays=False, **opts):
     :return:
     """
 
-    # leave this alone, or change the prefix of the functions defined above
-    fn_prefix = 'run_ca_'
-
+    # if the pattern consists only of alphanumeric characters and/or
+    # underscores and/or '*' (wildcard matching zero or more characters)
+    # and/or '?' (wildcard matching exactly one character), it is considered
+    # a wildcard pattern (which is then converted to a regex pattern) otherwise
+    # a regex.
     if re.match(r'^[\w*?]*$', pat):
         if not pat.startswith('*'):
             pat = '^' + pat
@@ -542,19 +544,24 @@ def main(pat='*', print_arrays=False, **opts):
             pat += '$'
         pat = pat.replace('*', '.*').replace('?', '.')
 
-    print('function name regex:', pat, end='\n\n', sep='\n')
+    print(
+        'Function name regex',
+        '-------------------',
+        pat,
+        end='\n\n', sep='\n'
+    )
 
-    fnames = *filter(
+    o = options(opts)
+    fn_prefix = o.run_func_prefix
+    o.fnames = fnames = *filter(
         partial(re.search, pat),
         (
             fn[len(fn_prefix):]
             for fn in vars(sys.modules[__name__]) if fn.startswith(fn_prefix)
         )
     ),
-    o = options(opts)
-    o.fnames = fnames
 
-    print(*fnames, '\ngrade: ' + o.grade, sep='\n', end='\n\n')
+    print(*fnames, '\nGrade: ' + o.grade, sep='\n', end='\n\n')
 
     gens = o.gens
     n_fn = len(fnames)
@@ -564,7 +571,7 @@ def main(pat='*', print_arrays=False, **opts):
     # grids, call strings (for display purposes), execution times
     arrays, call_str, dts = [], [], []
     for fn in fnames:
-        f = eval(f'run_ca_{fn}')
+        f = eval(fn_prefix + fn)
         t0, arr = t(), f()
         dt = t() - t0
         dts.append(dt)
@@ -583,7 +590,7 @@ def main(pat='*', print_arrays=False, **opts):
             call_str[j]
         )
     print()
-    # print(f'compare arrays dt: {t()-t0:.3f}')
+    # print(f'Compare-arrays dt: {t()-t0:.3f}')
 
     if print_arrays:
         print(conv_opts.data.np.u.init, '\n=================')
